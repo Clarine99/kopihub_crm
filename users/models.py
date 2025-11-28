@@ -1,8 +1,18 @@
 from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+
+class UserRole(models.TextChoices):
+    CASHIER = "cashier", "Cashier"
+    ADMIN = "admin", "Admin"
 
 
 class User(AbstractUser):
-    """Custom user model so AUTH_USER_MODEL points to a concrete class."""
+    role = models.CharField(
+        max_length=20,
+        choices=UserRole.choices,
+        default=UserRole.CASHIER,
+    )
 
     def __str__(self) -> str:
-        return self.get_username()
+        return f"{self.username} ({self.role})"
