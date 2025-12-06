@@ -1,9 +1,6 @@
-from datetime import timedelta
-
-from django.utils import timezone
 from rest_framework import serializers
 
-from .models import Customer, Membership, ProgramSettings, Stamp, StampCycle
+from .models import Customer, Membership, Stamp, StampCycle
 
 
 class CustomerSerializer(serializers.ModelSerializer):
