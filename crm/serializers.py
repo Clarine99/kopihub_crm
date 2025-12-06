@@ -1,9 +1,6 @@
-from datetime import timedelta
-
-from django.utils import timezone
 from rest_framework import serializers
 
-from .models import Customer, Membership, ProgramSettings, Stamp, StampCycle
+from .models import Customer, Membership, Stamp, StampCycle
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -58,10 +55,9 @@ class MembershipSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        settings = ProgramSettings.get_solo()
-        start_date = validated_data.get("start_date") or timezone.localdate()
-        end_date = validated_data.get("end_date") or start_date + timedelta(days=settings.membership_duration_months * 30)
-
-        validated_data["start_date"] = start_date
-        validated_data["end_date"] = end_date
-        return super().create(validated_data)
+        return Membership.create_new(
+            customer=validated_data["customer"],
+            card_number=validated_data["card_number"],
+            start_date=validated_data.get("start_date"),
+            end_date=validated_data.get("end_date"),
+        )

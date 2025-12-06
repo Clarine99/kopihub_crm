@@ -57,14 +57,21 @@ class Membership(TimeStampedModel):
             self.save(update_fields=["status"])
 
     @classmethod
-    def create_new(cls, customer: "Customer", card_number: str, duration_months: int | None = None) -> "Membership":
+    def create_new(
+        cls,
+        customer: "Customer",
+        card_number: str,
+        duration_months: int | None = None,
+        start_date=None,
+        end_date=None,
+    ) -> "Membership":
         from django.db import transaction
 
         settings = ProgramSettings.get_solo()
         months = duration_months if duration_months is not None else settings.membership_duration_months
 
-        start = timezone.localdate()
-        end = start + timedelta(days=months * 30)
+        start = start_date or timezone.localdate()
+        end = end_date or (start + timedelta(days=months * 30))
 
         with transaction.atomic():
             membership = cls.objects.create(
