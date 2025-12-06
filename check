@@ -1,0 +1,15 @@
+#!/usr/bin/env python
+"""Run Django's system checks with `uv run python check`."""
+import os
+
+from django.core.management import execute_from_command_line
+
+
+def main() -> None:
+    # Mirror manage.py so Django knows which settings module to load.
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    execute_from_command_line(["manage.py", "check"])
+
+
+if __name__ == "__main__":
+    main()
