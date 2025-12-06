@@ -58,20 +58,38 @@ class Membership(TimeStampedModel):
 
     @classmethod
     def create_new(cls, customer: "Customer", card_number: str, duration_months: int | None = None) -> "Membership":
-        from .models import ProgramSettings  # local import to avoid circular dependency
+        from django.db import transaction
 
         settings = ProgramSettings.get_solo()
-        months = duration_months or settings.membership_duration_months
+        months = duration_months if duration_months is not None else settings.membership_duration_months
 
         start = timezone.localdate()
         end = start + timedelta(days=months * 30)
-        return cls.objects.create(
-            customer=customer,
-            card_number=card_number,
-            start_date=start,
-            end_date=end,
-            status=MembershipStatus.ACTIVE,
-        )
+
+        with transaction.atomic():
+            membership = cls.objects.create(
+                customer=customer,
+                card_number=card_number,
+                start_date=start,
+                end_date=end,
+                status=MembershipStatus.ACTIVE,
+            )
+
+            first_cycle = StampCycle.objects.create(
+                membership=membership,
+                cycle_number=1,
+                is_closed=False,
+            )
+
+            Stamp.objects.create(
+                cycle=first_cycle,
+                number=1,
+                reward_type=settings.reward_stamp_1_type,
+                transaction_amount=None,
+                pos_receipt_number=None,
+            )
+
+        return membership
 
 
 class StampCycle(TimeStampedModel):

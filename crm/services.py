@@ -6,7 +6,7 @@ from .models import Membership, ProgramSettings, RewardType, Stamp, StampCycle
 
 
 def get_or_create_active_cycle(membership: Membership) -> StampCycle:
-    cycles = membership.cycles.order_by("cycle_number")
+    cycles = membership.cycles.select_for_update().order_by("cycle_number")
     active_cycle = cycles.filter(is_closed=False).last()
     if active_cycle is None:
         next_number = (cycles.last().cycle_number + 1) if cycles.exists() else 1

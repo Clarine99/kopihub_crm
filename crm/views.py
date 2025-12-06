@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -22,18 +23,19 @@ class MembershipViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer) -> None:
-        membership = serializer.save()
-        settings = ProgramSettings.get_solo()
-        cycle = StampCycle.objects.create(
-            membership=membership,
-            cycle_number=1,
-            is_closed=False,
-        )
-        Stamp.objects.create(
-            cycle=cycle,
-            number=1,
-            reward_type=settings.reward_stamp_1_type or RewardType.FREE_DRINK,
-        )
+        with transaction.atomic():
+            membership = serializer.save()
+            settings = ProgramSettings.get_solo()
+            cycle = StampCycle.objects.create(
+                membership=membership,
+                cycle_number=1,
+                is_closed=False,
+            )
+            Stamp.objects.create(
+                cycle=cycle,
+                number=1,
+                reward_type=settings.reward_stamp_1_type or RewardType.FREE_DRINK,
+            )
 
     def get_queryset(self):
         qs = super().get_queryset()
