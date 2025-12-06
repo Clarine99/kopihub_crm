@@ -1,0 +1,15 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "django>=5.2.8",
+    "djangorestframework>=3.16.1",
+    "djangorestframework-simplejwt>=5.5.1",
+    # Use binary wheel to avoid needing system pg_config during local development
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.1",
+    "python-decouple>=3.8",
+]
