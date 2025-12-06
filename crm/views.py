@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Customer, Membership, ProgramSettings, RewardType, Stamp, StampCycle
+from .models import Customer, Membership, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 
@@ -22,18 +22,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer) -> None:
-        membership = serializer.save()
-        settings = ProgramSettings.get_solo()
-        cycle = StampCycle.objects.create(
-            membership=membership,
-            cycle_number=1,
-            is_closed=False,
-        )
-        Stamp.objects.create(
-            cycle=cycle,
-            number=1,
-            reward_type=settings.reward_stamp_1_type or RewardType.FREE_DRINK,
-        )
+        serializer.save()
 
     def get_queryset(self):
         qs = super().get_queryset()
