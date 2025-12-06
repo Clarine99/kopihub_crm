@@ -58,10 +58,13 @@ class MembershipSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        settings = ProgramSettings.get_solo()
-        start_date = validated_data.get("start_date") or timezone.localdate()
-        end_date = validated_data.get("end_date") or start_date + timedelta(days=settings.membership_duration_months * 30)
-
-        validated_data["start_date"] = start_date
-        validated_data["end_date"] = end_date
-        return super().create(validated_data)
+        customer = validated_data.pop("customer")
+        card_number = validated_data["card_number"]
+        start_date = validated_data.get("start_date")
+        end_date = validated_data.get("end_date")
+        return Membership.create_new(
+            customer=customer,
+            card_number=card_number,
+            start_date=start_date,
+            end_date=end_date,
+        )

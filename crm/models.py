@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 
@@ -57,21 +57,41 @@ class Membership(TimeStampedModel):
             self.save(update_fields=["status"])
 
     @classmethod
-    def create_new(cls, customer: "Customer", card_number: str, duration_months: int | None = None) -> "Membership":
+    def create_new(
+        cls,
+        customer: "Customer",
+        card_number: str,
+        duration_months: int | None = None,
+        start_date=None,
+        end_date=None,
+    ) -> "Membership":
         from .models import ProgramSettings  # local import to avoid circular dependency
 
         settings = ProgramSettings.get_solo()
         months = duration_months or settings.membership_duration_months
 
-        start = timezone.localdate()
-        end = start + timedelta(days=months * 30)
-        return cls.objects.create(
-            customer=customer,
-            card_number=card_number,
-            start_date=start,
-            end_date=end,
-            status=MembershipStatus.ACTIVE,
-        )
+        start = start_date or timezone.localdate()
+        computed_end = end_date or (start + timedelta(days=months * 30))
+
+        with transaction.atomic():
+            membership = cls.objects.create(
+                customer=customer,
+                card_number=card_number,
+                start_date=start,
+                end_date=computed_end,
+                status=MembershipStatus.ACTIVE,
+            )
+            cycle = StampCycle.objects.create(
+                membership=membership,
+                cycle_number=1,
+                is_closed=False,
+            )
+            Stamp.objects.create(
+                cycle=cycle,
+                number=1,
+                reward_type=settings.reward_stamp_1_type or RewardType.FREE_DRINK,
+            )
+            return membership
 
 
 class StampCycle(TimeStampedModel):
