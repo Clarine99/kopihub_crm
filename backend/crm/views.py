@@ -2,24 +2,31 @@ from decimal import Decimal
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import Customer, Membership, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
+from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsCashierOrAdminRole]
 
 
 class MembershipViewSet(viewsets.ModelViewSet):
     queryset = Membership.objects.select_related("customer").prefetch_related("cycles__stamps").all()
     serializer_class = MembershipSerializer
-    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        admin_only_actions = {"update", "partial_update", "destroy"}
+        if self.action in admin_only_actions:
+            permission_classes = [IsAdminUserRole]
+        else:
+            permission_classes = [IsCashierOrAdminRole]
+        return [perm() for perm in permission_classes]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -96,7 +103,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
 
 class ProgramSettingsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUserRole]
 
     def list(self, request):
         settings = ProgramSettings.get_solo()
@@ -111,10 +118,6 @@ class ProgramSettingsViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        user = request.user
-        if not user.is_superuser and getattr(user, "role", None) != "admin":
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-
         settings = ProgramSettings.get_solo()
         for field in [
             "membership_fee",
