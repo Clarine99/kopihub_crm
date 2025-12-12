@@ -4,7 +4,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Customer, Membership, ProgramSettings, RewardType, Stamp
+from .models import Customer, Membership, MembershipCard, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
@@ -21,7 +21,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
     serializer_class = MembershipSerializer
 
     def get_permissions(self):
-        admin_only_actions = {"update", "partial_update", "destroy"}
+        admin_only_actions = {"create", "update", "partial_update", "destroy"}
         if self.action in admin_only_actions:
             permission_classes = [IsAdminUserRole]
         else:
@@ -34,6 +34,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if status_filter:
             qs = qs.filter(status=status_filter)
         return qs
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "Direct membership creation disabled. Use activate-card."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     @action(detail=False, methods=["get"], url_path="lookup")
     def lookup(self, request):
@@ -56,11 +62,64 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 .first()
             )
         if membership is None:
+            try:
+                card = MembershipCard.objects.select_related(
+                    "membership__customer"
+                ).prefetch_related("membership__cycles__stamps").get(public_id=identifier)
+                membership = card.membership
+            except (MembershipCard.DoesNotExist, ValueError):
+                membership = None
+        if membership is None:
             return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
 
         membership.refresh_status_by_date()
         serializer = self.get_serializer(membership)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="activate-card")
+    def activate_card(self, request):
+        card_number = request.data.get("card_number")
+        public_id = request.data.get("public_id")
+        name = request.data.get("name")
+        phone = request.data.get("phone")
+        email = request.data.get("email")
+
+        if not (card_number or public_id):
+            return Response({"detail": "card_number or public_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not (name and phone):
+            return Response({"detail": "name and phone are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        card = None
+        if card_number:
+            card = MembershipCard.objects.filter(card_number=card_number).first()
+        if card is None and public_id:
+            card = MembershipCard.objects.filter(public_id=public_id).first()
+        if card is None:
+            return Response({"detail": "Card not found"}, status=status.HTTP_404_NOT_FOUND)
+        if card.is_assigned or card.membership:
+            return Response({"detail": "Card already assigned"}, status=status.HTTP_400_BAD_REQUEST)
+
+        customer, created = Customer.objects.get_or_create(
+            phone=phone,
+            defaults={"name": name, "email": email},
+        )
+        if not created:
+            updated = False
+            if name and not customer.name:
+                customer.name = name
+                updated = True
+            if email and not customer.email:
+                customer.email = email
+                updated = True
+            if updated:
+                customer.save(update_fields=["name", "email"])
+
+        membership = Membership.create_new(
+            customer=customer,
+            card=card,
+        )
+        serializer = self.get_serializer(membership)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="add-stamp")
     def add_stamp(self, request, pk=None):

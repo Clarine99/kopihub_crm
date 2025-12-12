@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 
 from django.db import models, transaction
 from django.utils import timezone
@@ -21,6 +22,22 @@ class Customer(TimeStampedModel):
         return f"{self.name} ({self.phone})"
 
 
+class MembershipCard(TimeStampedModel):
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    card_number = models.CharField(max_length=50, unique=True)
+    is_assigned = models.BooleanField(default=False)
+    membership = models.OneToOneField(
+        "Membership",
+        on_delete=models.SET_NULL,
+        related_name="card",
+        null=True,
+        blank=True,
+    )
+
+    def __str__(self) -> str:
+        return f"{self.card_number} ({'assigned' if self.is_assigned else 'unassigned'})"
+
+
 class MembershipStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     EXPIRED = "expired", "Expired"
@@ -29,7 +46,7 @@ class MembershipStatus(models.TextChoices):
 
 class Membership(TimeStampedModel):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="memberships")
-    card_number = models.CharField(max_length=50, unique=True)
+    card_number = models.CharField(max_length=50, unique=True, editable=False)
 
     start_date = models.DateField()
     end_date = models.DateField()
@@ -60,7 +77,7 @@ class Membership(TimeStampedModel):
     def create_new(
         cls,
         customer: "Customer",
-        card_number: str,
+        card: "MembershipCard",
         duration_months: int | None = None,
         start_date=None,
         end_date=None,
@@ -76,11 +93,14 @@ class Membership(TimeStampedModel):
         with transaction.atomic():
             membership = cls.objects.create(
                 customer=customer,
-                card_number=card_number,
+                card_number=card.card_number,
                 start_date=start,
                 end_date=computed_end,
                 status=MembershipStatus.ACTIVE,
             )
+            card.membership = membership
+            card.is_assigned = True
+            card.save(update_fields=["membership", "is_assigned"])
             cycle = StampCycle.objects.create(
                 membership=membership,
                 cycle_number=1,

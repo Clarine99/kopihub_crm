@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Customer, Membership, ProgramSettings, Stamp, StampCycle
+from .models import Customer, Membership, MembershipCard, ProgramSettings, Stamp, StampCycle
 
 
 @admin.register(Customer)
@@ -14,6 +14,13 @@ class MembershipAdmin(admin.ModelAdmin):
     list_display = ("card_number", "customer", "status", "start_date", "end_date")
     search_fields = ("card_number", "customer__name", "customer__phone")
     list_filter = ("status",)
+
+
+@admin.register(MembershipCard)
+class MembershipCardAdmin(admin.ModelAdmin):
+    list_display = ("card_number", "public_id", "is_assigned", "membership")
+    search_fields = ("card_number", "public_id")
+    list_filter = ("is_assigned",)
 
 
 @admin.register(StampCycle)

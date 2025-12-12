@@ -1,9 +1,6 @@
-from datetime import timedelta
-
-from django.utils import timezone
 from rest_framework import serializers
 
-from .models import Customer, Membership, ProgramSettings, Stamp, StampCycle
+from .models import Customer, Membership, MembershipCard, Stamp, StampCycle
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -55,16 +52,12 @@ class MembershipSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "start_date": {"required": False},
             "end_date": {"required": False},
+            "card_number": {"read_only": True},
         }
 
-    def create(self, validated_data):
-        customer = validated_data.pop("customer")
-        card_number = validated_data["card_number"]
-        start_date = validated_data.get("start_date")
-        end_date = validated_data.get("end_date")
-        return Membership.create_new(
-            customer=customer,
-            card_number=card_number,
-            start_date=start_date,
-            end_date=end_date,
-        )
+
+class MembershipCardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MembershipCard
+        fields = ["public_id", "card_number", "is_assigned"]
+        read_only_fields = ["public_id", "card_number", "is_assigned"]
