@@ -94,3 +94,70 @@ class MembershipCardApiTests(TestCase):
         response = self.client.post(reverse("cards-list"), data={}, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data["card_number"].startswith("CARD-"))
+
+
+class MembershipHistoryApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier-history",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.customer = Customer.objects.create(name="History Tester", phone="0800000001")
+        today = timezone.localdate()
+        self.membership = Membership.objects.create(
+            customer=self.customer,
+            card_number="CARD-HIST",
+            start_date=today,
+            end_date=today + timedelta(days=90),
+        )
+
+    def test_history_returns_membership_detail(self):
+        response = self.client.get(reverse("memberships-history", kwargs={"pk": self.membership.id}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.membership.id)
+
+
+class SummaryReportApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier-report",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_summary_report_returns_counts(self):
+        response = self.client.get(reverse("reports-summary"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("active_members", response.data)
+
+    def test_summary_report_invalid_from_date(self):
+        response = self.client.get(reverse("reports-summary"), data={"from": "2025-99-99"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RewardReportApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier-reward-report",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_reward_report_returns_counts(self):
+        response = self.client.get(reverse("reports-rewards"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("free_drink_used", response.data)
+
+    def test_reward_report_invalid_to_date(self):
+        response = self.client.get(reverse("reports-rewards"), data={"to": "invalid-date"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

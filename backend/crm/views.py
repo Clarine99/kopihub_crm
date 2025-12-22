@@ -3,10 +3,12 @@ from decimal import Decimal
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from django.core.exceptions import ValidationError
+from django.utils.dateparse import parse_date
 
-from .models import Customer, Membership, MembershipCard, ProgramSettings, RewardType, Stamp
+from .models import Customer, Membership, MembershipCard, MembershipStatus, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipCardSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
@@ -168,6 +170,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
         stamp.mark_redeemed()
         return Response(StampSerializer(stamp).data)
 
+    @action(detail=True, methods=["get"], url_path="history")
+    def history(self, request, pk=None):
+        membership = self.get_object()
+        serializer = self.get_serializer(membership)
+        return Response(serializer.data)
+
 
 class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     queryset = MembershipCard.objects.all()
@@ -204,3 +212,80 @@ class ProgramSettingsViewSet(viewsets.ViewSet):
                 setattr(settings, field, request.data[field])
         settings.save()
         return self.list(request)
+
+
+class SummaryReportView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_param = request.query_params.get("from")
+        end_param = request.query_params.get("to")
+        try:
+            start_date = parse_date(start_param) if start_param else None
+        except ValueError:
+            start_date = None
+        try:
+            end_date = parse_date(end_param) if end_param else None
+        except ValueError:
+            end_date = None
+        if start_param and not start_date:
+            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
+        if end_param and not end_date:
+            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+
+        memberships = Membership.objects.all()
+        if start_date:
+            memberships = memberships.filter(created_at__date__gte=start_date)
+        if end_date:
+            memberships = memberships.filter(created_at__date__lte=end_date)
+
+        redeemed_stamps = Stamp.objects.filter(redeemed_at__isnull=False)
+        if start_date:
+            redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__gte=start_date)
+        if end_date:
+            redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__lte=end_date)
+
+        data = {
+            "active_members": memberships.filter(status=MembershipStatus.ACTIVE).count(),
+            "expired_members": memberships.filter(status=MembershipStatus.EXPIRED).count(),
+            "free_drink_used": redeemed_stamps.filter(reward_type=RewardType.FREE_DRINK).count(),
+            "voucher_used": redeemed_stamps.filter(reward_type=RewardType.VOUCHER_50K).count(),
+        }
+        return Response(data)
+
+
+class RewardReportView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_param = request.query_params.get("from")
+        end_param = request.query_params.get("to")
+        try:
+            start_date = parse_date(start_param) if start_param else None
+        except ValueError:
+            start_date = None
+        try:
+            end_date = parse_date(end_param) if end_param else None
+        except ValueError:
+            end_date = None
+        if start_param and not start_date:
+            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
+        if end_param and not end_date:
+            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+
+        used = Stamp.objects.filter(redeemed_at__isnull=False)
+        unused = Stamp.objects.filter(redeemed_at__isnull=True)
+        if start_date:
+            used = used.filter(redeemed_at__date__gte=start_date)
+            unused = unused.filter(created_at__date__gte=start_date)
+        if end_date:
+            used = used.filter(redeemed_at__date__lte=end_date)
+            unused = unused.filter(created_at__date__lte=end_date)
+
+        data = {
+            "free_drink_used": used.filter(reward_type=RewardType.FREE_DRINK).count(),
+            "free_drink_unused": unused.filter(reward_type=RewardType.FREE_DRINK).count(),
+            "voucher_used": used.filter(reward_type=RewardType.VOUCHER_50K).count(),
+            "voucher_unused": unused.filter(reward_type=RewardType.VOUCHER_50K).count(),
+        }
+        return Response(data)

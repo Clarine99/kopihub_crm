@@ -1078,6 +1078,11 @@ Konsep:
   - `GET /api/reports/rewards/` → agregasi reward terpakai vs belum.
   - `GET /api/reports/summary/` → ringkasan jumlah member aktif/expired + reward terpakai.
 
+Catatan filter tanggal (opsional):
+- `from=YYYY-MM-DD` dan/atau `to=YYYY-MM-DD` untuk membatasi periode laporan.
+- Contoh: `/api/reports/summary/?from=2025-01-01&to=2025-12-31`
+- Contoh: `/api/reports/rewards/?from=2025-01-01`
+
 ### 7.4. Reporting
 
 Contoh endpoint:
