@@ -781,7 +781,6 @@ import { apiFetch } from "@/lib/api";
 export default function NewMemberPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -791,19 +790,19 @@ export default function NewMemberPage() {
     setMessage(null);
 
     try {
-      // 1) create/find customer
-      const customer = await apiFetch("/customers/", {
+      // 1) create new card (auto-generated)
+      const card = await apiFetch("/cards/", {
         method: "POST",
-        body: JSON.stringify({ name, phone }),
+        body: JSON.stringify({}),
       });
 
-      // 2) create membership
-      const membership = await apiFetch("/memberships/", {
+      // 2) activate card -> create membership
+      const membership = await apiFetch("/memberships/activate-card/", {
         method: "POST",
         body: JSON.stringify({
-          customer_id: customer.id,
-          card_number: cardNumber,
-          // start_date/end_date: biarkan backend otomatis atau kirim manual
+          card_number: card.card_number,
+          name,
+          phone,
         }),
       });
 
@@ -835,15 +834,6 @@ export default function NewMemberPage() {
             className="border rounded w-full p-2"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium">Nomor Kartu</label>
-          <input
-            className="border rounded w-full p-2"
-            value={cardNumber}
-            onChange={(e) => setCardNumber(e.target.value)}
             required
           />
         </div>
