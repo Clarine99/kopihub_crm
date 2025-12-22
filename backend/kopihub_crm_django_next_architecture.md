@@ -807,7 +807,10 @@ export default function NewMemberPage() {
       });
 
       // 3) backend harus otomatis buat Cycle #1 + Stamp #1 free drink
-      setMessage(`Membership berhasil dibuat untuk ${membership.customer.name}`);
+      setMessage(
+        `Membership berhasil dibuat untuk ${membership.customer.name}. ` +
+          `No Kartu: ${membership.card_number}`
+      );
     } catch (err: any) {
       setMessage(err.message ?? "Terjadi kesalahan");
     } finally {
@@ -1073,6 +1076,7 @@ Konsep:
 - Endpoint tambahan:
   - `GET /api/memberships/{id}/history/` → detail cycle & stamp.
   - `GET /api/reports/rewards/` → agregasi reward terpakai vs belum.
+  - `GET /api/reports/summary/` → ringkasan jumlah member aktif/expired + reward terpakai.
 
 ### 7.4. Reporting
 
