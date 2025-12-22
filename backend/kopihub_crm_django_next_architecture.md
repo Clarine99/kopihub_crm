@@ -136,7 +136,36 @@ class Customer(TimeStampedModel):
         return f"{self.name} ({self.phone})"
 ```
 
-### 3.2. Model Membership
+### 3.2. Model MembershipCard
+
+Kartu fisik direpresentasikan sebagai entitas terpisah agar bisa dibuat lebih dulu lalu di-assign ke member.
+
+```python
+class MembershipCard(TimeStampedModel):
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    card_number = models.CharField(max_length=50, unique=True)
+    is_assigned = models.BooleanField(default=False)
+    membership = models.OneToOneField(
+        "Membership",
+        on_delete=models.SET_NULL,
+        related_name="card",
+        null=True,
+        blank=True,
+    )
+
+    @staticmethod
+    def generate_card_number() -> str:
+        return f"CARD-{uuid.uuid4().hex[:10].upper()}"
+
+    def save(self, *args, **kwargs):
+        if not self.card_number:
+            self.card_number = self.generate_card_number()
+            while type(self).objects.filter(card_number=self.card_number).exists():
+                self.card_number = self.generate_card_number()
+        super().save(*args, **kwargs)
+```
+
+### 3.3. Model Membership
 
 ```python
 from datetime import timedelta
@@ -150,7 +179,7 @@ class MembershipStatus(models.TextChoices):
 
 class Membership(TimeStampedModel):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="memberships")
-    card_number = models.CharField(max_length=50, unique=True)
+    card_number = models.CharField(max_length=50, unique=True, editable=False)
 
     start_date = models.DateField()
     end_date = models.DateField()
@@ -178,20 +207,44 @@ class Membership(TimeStampedModel):
             self.save(update_fields=["status"])
 
     @classmethod
-    def create_new(cls, customer: Customer, card_number: str, duration_months: int = 3):
-        start = timezone.localdate()
-        # sederhana: approx 3 bulan = 90 hari
-        end = start + timedelta(days=duration_months * 30)
-        return cls.objects.create(
-            customer=customer,
-            card_number=card_number,
-            start_date=start,
-            end_date=end,
-            status=MembershipStatus.ACTIVE,
-        )
+    def create_new(
+        cls,
+        customer: Customer,
+        card: MembershipCard,
+        duration_months: int | None = None,
+        start_date=None,
+        end_date=None,
+    ):
+        settings = ProgramSettings.get_solo()
+        months = duration_months or settings.membership_duration_months
+        start = start_date or timezone.localdate()
+        computed_end = end_date or (start + timedelta(days=months * 30))
+
+        with transaction.atomic():
+            membership = cls.objects.create(
+                customer=customer,
+                card_number=card.card_number,
+                start_date=start,
+                end_date=computed_end,
+                status=MembershipStatus.ACTIVE,
+            )
+            card.membership = membership
+            card.is_assigned = True
+            card.save(update_fields=["membership", "is_assigned"])
+            cycle = StampCycle.objects.create(
+                membership=membership,
+                cycle_number=1,
+                is_closed=False,
+            )
+            Stamp.objects.create(
+                cycle=cycle,
+                number=1,
+                reward_type=settings.reward_stamp_1_type or RewardType.FREE_DRINK,
+            )
+            return membership
 ```
 
-### 3.3. Model StampCycle & Stamp
+### 3.4. Model StampCycle & Stamp
 
 ```python
 class StampCycle(TimeStampedModel):
@@ -250,7 +303,7 @@ class Stamp(TimeStampedModel):
             self.save(update_fields=["redeemed_at"])
 ```
 
-### 3.4. Global Settings (rule program)
+### 3.5. Global Settings (rule program)
 
 ```python
 class ProgramSettings(TimeStampedModel):
@@ -283,7 +336,7 @@ class ProgramSettings(TimeStampedModel):
         return obj
 ```
 
-### 3.5. Helper: Award Stamp
+### 3.6. Helper: Award Stamp
 
 Bisa taruh di `crm/services.py` atau method helper di model.
 
@@ -459,6 +512,21 @@ class MembershipSerializer(serializers.ModelSerializer):
             "status",
             "cycles",
         ]
+
+    def create(self, validated_data):
+        if "start_date" not in validated_data:
+            validated_data["start_date"] = timezone.localdate()
+        if "end_date" not in validated_data:
+            months = ProgramSettings.get_solo().membership_duration_months
+            validated_data["end_date"] = validated_data["start_date"] + timedelta(days=months * 30)
+        return super().create(validated_data)
+
+
+class MembershipCardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MembershipCard
+        fields = ["public_id", "card_number", "is_assigned"]
+        read_only_fields = ["public_id", "card_number", "is_assigned"]
 ```
 
 ### 5.2. Endpoint Utama
@@ -491,7 +559,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
 class MembershipViewSet(viewsets.ModelViewSet):
     queryset = Membership.objects.select_related("customer").all()
     serializer_class = MembershipSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsCashierOrAdminRole]
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "Direct membership creation disabled. Use activate-card."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     @action(detail=False, methods=["get"], url_path="lookup")
     def lookup(self, request):
@@ -519,6 +593,48 @@ class MembershipViewSet(viewsets.ModelViewSet):
         membership.refresh_status_by_date()
         serializer = self.get_serializer(membership)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="activate-card")
+    def activate_card(self, request):
+        card_number = request.data.get("card_number")
+        public_id = request.data.get("public_id")
+        name = request.data.get("name")
+        phone = request.data.get("phone")
+        email = request.data.get("email")
+
+        if not (card_number or public_id):
+            return Response({"detail": "card_number or public_id is required"}, status=400)
+        if not (name and phone):
+            return Response({"detail": "name and phone are required"}, status=400)
+
+        card = None
+        if card_number:
+            card = MembershipCard.objects.filter(card_number=card_number).first()
+        if card is None and public_id:
+            card = MembershipCard.objects.filter(public_id=public_id).first()
+        if card is None:
+            return Response({"detail": "Card not found"}, status=404)
+        if card.is_assigned or card.membership:
+            return Response({"detail": "Card already assigned"}, status=400)
+
+        customer, created = Customer.objects.get_or_create(
+            phone=phone,
+            defaults={"name": name, "email": email},
+        )
+        if not created:
+            updated = False
+            if name and not customer.name:
+                customer.name = name
+                updated = True
+            if email and not customer.email:
+                customer.email = email
+                updated = True
+            if updated:
+                customer.save(update_fields=["name", "email"])
+
+        membership = Membership.create_new(customer=customer, card=card)
+        serializer = self.get_serializer(membership)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="add-stamp")
     def add_stamp(self, request, pk=None):
@@ -564,7 +680,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
 
 class ProgramSettingsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUserRole]
 
     def list(self, request):
         settings = ProgramSettings.get_solo()
@@ -579,9 +695,6 @@ class ProgramSettingsViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        # gunakan juga untuk update (PUT-like), hanya boleh admin
-        if not request.user.is_superuser and request.user.role != "admin":
-            return Response({"detail": "Forbidden"}, status=403)
         settings = ProgramSettings.get_solo()
         for field in [
             "membership_fee",
@@ -607,6 +720,7 @@ from .views import CustomerViewSet, MembershipViewSet, ProgramSettingsViewSet
 router = DefaultRouter()
 router.register(r"customers", CustomerViewSet, basename="customers")
 router.register(r"memberships", MembershipViewSet, basename="memberships")
+router.register(r"cards", MembershipCardViewSet, basename="cards")
 router.register(r"settings", ProgramSettingsViewSet, basename="settings")
 
 urlpatterns = router.urls
@@ -1075,4 +1189,7 @@ Ubah `Membership.create_new` atau override `MembershipViewSet.perform_create` su
 ---
 
 Dokumen ini sudah cukup untuk kamu jadikan blueprint implementasi full project Django + Next.js + PostgreSQL untuk program membership Kopi Hub.
-
+class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
+    queryset = MembershipCard.objects.all()
+    serializer_class = MembershipCardSerializer
+    permission_classes = [IsCashierOrAdminRole]

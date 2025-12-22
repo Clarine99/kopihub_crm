@@ -1,6 +1,9 @@
-from rest_framework import serializers
+from datetime import timedelta
 
-from .models import Customer, Membership, MembershipCard, Stamp, StampCycle
+from rest_framework import serializers
+from django.utils import timezone
+
+from .models import Customer, Membership, MembershipCard, ProgramSettings, Stamp, StampCycle
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -54,6 +57,14 @@ class MembershipSerializer(serializers.ModelSerializer):
             "end_date": {"required": False},
             "card_number": {"read_only": True},
         }
+
+    def create(self, validated_data):
+        if "start_date" not in validated_data:
+            validated_data["start_date"] = timezone.localdate()
+        if "end_date" not in validated_data:
+            months = ProgramSettings.get_solo().membership_duration_months
+            validated_data["end_date"] = validated_data["start_date"] + timedelta(days=months * 30)
+        return super().create(validated_data)
 
 
 class MembershipCardSerializer(serializers.ModelSerializer):

@@ -2,6 +2,7 @@ from datetime import timedelta
 import uuid
 
 from django.db import models, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -33,6 +34,17 @@ class MembershipCard(TimeStampedModel):
         null=True,
         blank=True,
     )
+
+    @staticmethod
+    def generate_card_number() -> str:
+        return f"CARD-{uuid.uuid4().hex[:10].upper()}"
+
+    def save(self, *args, **kwargs):
+        if not self.card_number:
+            self.card_number = self.generate_card_number()
+            while type(self).objects.filter(card_number=self.card_number).exists():
+                self.card_number = self.generate_card_number()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.card_number} ({'assigned' if self.is_assigned else 'unassigned'})"
@@ -156,6 +168,13 @@ class Stamp(TimeStampedModel):
 
     class Meta:
         unique_together = ("cycle", "number")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["pos_receipt_number"],
+                condition=Q(pos_receipt_number__isnull=False),
+                name="unique_receipt_number_when_present",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"Stamp {self.number} - {self.cycle}"

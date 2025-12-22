@@ -1,10 +1,16 @@
 from decimal import Decimal
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APIClient
 
-from .models import Customer, Membership, ProgramSettings, RewardType, StampCycle
+from users.models import UserRole
+
+from .models import Customer, Membership, MembershipCard, ProgramSettings, RewardType, StampCycle
 from .serializers import MembershipSerializer
 from .services import award_stamp_for_transaction
 
@@ -66,3 +72,25 @@ class AwardStampTests(TestCase):
             membership.end_date,
             today + timedelta(days=ProgramSettings.get_solo().membership_duration_months * 30),
         )
+
+    def test_membership_card_auto_generates_number(self):
+        card = MembershipCard.objects.create()
+        self.assertTrue(card.card_number)
+        self.assertTrue(card.card_number.startswith("CARD-"))
+
+
+class MembershipCardApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_create_card_generates_number(self):
+        response = self.client.post(reverse("cards-list"), data={}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["card_number"].startswith("CARD-"))

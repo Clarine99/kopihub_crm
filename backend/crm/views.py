@@ -1,11 +1,13 @@
 from decimal import Decimal
 
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from django.core.exceptions import ValidationError
+
 from .models import Customer, Membership, MembershipCard, ProgramSettings, RewardType, Stamp
-from .serializers import CustomerSerializer, MembershipSerializer, StampSerializer
+from .serializers import CustomerSerializer, MembershipCardSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
 
@@ -46,6 +48,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
         identifier = request.query_params.get("q")
         if not identifier:
             return Response({"detail": "q is required"}, status=status.HTTP_400_BAD_REQUEST)
+        # normalize common typos such as trailing slashes/spaces
+        identifier = identifier.strip().strip("/")
 
         membership = (
             Membership.objects.select_related("customer")
@@ -63,11 +67,13 @@ class MembershipViewSet(viewsets.ModelViewSet):
             )
         if membership is None:
             try:
-                card = MembershipCard.objects.select_related(
-                    "membership__customer"
-                ).prefetch_related("membership__cycles__stamps").get(public_id=identifier)
+                card = (
+                    MembershipCard.objects.select_related("membership__customer")
+                    .prefetch_related("membership__cycles__stamps")
+                    .get(public_id=identifier)
+                )
                 membership = card.membership
-            except (MembershipCard.DoesNotExist, ValueError):
+            except (MembershipCard.DoesNotExist, ValueError, ValidationError):
                 membership = None
         if membership is None:
             return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -128,6 +134,8 @@ class MembershipViewSet(viewsets.ModelViewSet):
         receipt = request.data.get("pos_receipt_number")
         if amount is None:
             return Response({"detail": "transaction_amount required"}, status=status.HTTP_400_BAD_REQUEST)
+        if receipt and Stamp.objects.filter(pos_receipt_number=receipt).exists():
+            return Response({"detail": "pos_receipt_number already used"}, status=status.HTTP_400_BAD_REQUEST)
 
         stamp = award_stamp_for_transaction(
             membership,
@@ -159,6 +167,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
 
         stamp.mark_redeemed()
         return Response(StampSerializer(stamp).data)
+
+
+class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
+    queryset = MembershipCard.objects.all()
+    serializer_class = MembershipCardSerializer
+    permission_classes = [IsCashierOrAdminRole]
 
 
 class ProgramSettingsViewSet(viewsets.ViewSet):
