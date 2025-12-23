@@ -8,6 +8,7 @@ from .views import (
     ProgramSettingsViewSet,
     RewardReportView,
     SummaryReportView,
+    TransactionReportView,
 )
 
 router = DefaultRouter()
@@ -20,4 +21,5 @@ urlpatterns = [
     *router.urls,
     path("reports/summary/", SummaryReportView.as_view(), name="reports-summary"),
     path("reports/rewards/", RewardReportView.as_view(), name="reports-rewards"),
+    path("reports/transactions/", TransactionReportView.as_view(), name="reports-transactions"),
 ]

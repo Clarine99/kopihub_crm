@@ -127,6 +127,24 @@ class MembershipHistoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["membership_id"], self.membership.id)
 
+    def test_history_summary_active_only(self):
+        active_cycle = StampCycle.objects.create(
+            membership=self.membership,
+            cycle_number=1,
+            is_closed=False,
+        )
+        StampCycle.objects.create(
+            membership=self.membership,
+            cycle_number=2,
+            is_closed=True,
+        )
+        response = self.client.get(
+            reverse("memberships-history-summary", kwargs={"pk": self.membership.id}),
+            data={"active_only": "true"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["cycle_number"], active_cycle.cycle_number)
+
 
 class SummaryReportApiTests(TestCase):
     def setUp(self):
@@ -168,3 +186,20 @@ class RewardReportApiTests(TestCase):
     def test_reward_report_invalid_to_date(self):
         response = self.client.get(reverse("reports-rewards"), data={"to": "invalid-date"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class TransactionReportApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier-transaction-report",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_transaction_report_returns_counts(self):
+        response = self.client.get(reverse("reports-transactions"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("eligible_stamp_count", response.data)

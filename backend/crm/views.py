@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from django.core.exceptions import ValidationError
+from django.db import models
 from django.utils.dateparse import parse_date
 
 from .models import Customer, Membership, MembershipCard, MembershipStatus, ProgramSettings, RewardType, Stamp
@@ -179,10 +180,11 @@ class MembershipViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="history-summary")
     def history_summary(self, request, pk=None):
         membership = self.get_object()
+        active_only = request.query_params.get("active_only") in {"1", "true", "yes"}
         cycles = membership.cycles.order_by("cycle_number")
         active_cycle = cycles.filter(is_closed=False).last()
         latest_cycle = cycles.last()
-        cycle = active_cycle or latest_cycle
+        cycle = active_cycle if active_only else (active_cycle or latest_cycle)
 
         if cycle is None:
             data = {
@@ -312,5 +314,40 @@ class RewardReportView(APIView):
             "free_drink_unused": unused.filter(reward_type=RewardType.FREE_DRINK).count(),
             "voucher_used": used.filter(reward_type=RewardType.VOUCHER_50K).count(),
             "voucher_unused": unused.filter(reward_type=RewardType.VOUCHER_50K).count(),
+        }
+        return Response(data)
+
+
+class TransactionReportView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_param = request.query_params.get("from")
+        end_param = request.query_params.get("to")
+        try:
+            start_date = parse_date(start_param) if start_param else None
+        except ValueError:
+            start_date = None
+        try:
+            end_date = parse_date(end_param) if end_param else None
+        except ValueError:
+            end_date = None
+        if start_param and not start_date:
+            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
+        if end_param and not end_date:
+            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+
+        stamps = Stamp.objects.all()
+        if start_date:
+            stamps = stamps.filter(created_at__date__gte=start_date)
+        if end_date:
+            stamps = stamps.filter(created_at__date__lte=end_date)
+
+        data = {
+            "eligible_stamp_count": stamps.count(),
+            "total_transaction_amount": stamps.aggregate(
+                total=models.Sum("transaction_amount")
+            )["total"]
+            or 0,
         }
         return Response(data)
