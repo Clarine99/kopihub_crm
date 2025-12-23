@@ -1077,10 +1077,13 @@ Konsep:
   - `GET /api/memberships/{id}/history/` → detail cycle & stamp.
   - `GET /api/memberships/{id}/history-summary/` → ringkas cycle aktif/latest (opsional `active_only=true`).
   - `GET /api/memberships/history-summary/?public_id=...` → ringkas cycle via kartu (opsional `active_only=true`).
+  - `GET /api/memberships/scan/?public_id=...` → scan QR dan return detail membership.
   - `GET /api/reports/rewards/` → agregasi reward terpakai vs belum.
   - `GET /api/reports/summary/` → ringkasan jumlah member aktif/expired + reward terpakai.
   - `GET /api/reports/transactions/` → jumlah stamp eligible + total transaksi.
   - `GET /api/reports/transactions/daily/` → agregasi transaksi per hari.
+  - `GET /api/reports/transactions/period/?period=week|month` → agregasi transaksi per minggu/bulan.
+  - `GET /api/reports/transactions/csv/` → export CSV agregasi transaksi per hari.
   - `GET /api/cards/qr/?public_id=...` → QR code (PNG) untuk lookup member.
 
 Catatan filter tanggal (opsional):
@@ -1093,6 +1096,13 @@ Catatan filter tanggal (opsional):
 Contoh penggunaan:
 - QR code: `GET /api/cards/qr/?public_id=UUID` (response image/png)
 - History summary by card: `GET /api/memberships/history-summary/?public_id=UUID&active_only=true`
+- Scan QR: `GET /api/memberships/scan/?public_id=UUID`
+- CSV transaksi: `GET /api/reports/transactions/csv/`
+
+Rate limit (default):
+- scan: 30 req/menit per user
+- qr: 30 req/menit per user
+- reports: 10 req/menit per user
 
 ### 7.4. Reporting
 

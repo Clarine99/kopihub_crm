@@ -18,6 +18,7 @@ import qrcode
 from .models import Customer, Membership, MembershipCard, MembershipStatus, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipCardSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
+from .throttles import QrRateThrottle, ReportsRateThrottle, ScanRateThrottle
 from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
 
 
@@ -265,7 +266,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
         data = self._build_history_summary(card.membership, active_only=active_only)
         return Response(data)
 
-    @action(detail=False, methods=["get"], url_path="scan")
+    @action(detail=False, methods=["get"], url_path="scan", throttle_classes=[ScanRateThrottle])
     def scan(self, request):
         public_id = request.query_params.get("public_id")
         public_uuid, error_response = _parse_public_id(public_id)
@@ -289,7 +290,7 @@ class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewS
     serializer_class = MembershipCardSerializer
     permission_classes = [IsCashierOrAdminRole]
 
-    @action(detail=False, methods=["get"], url_path="qr")
+    @action(detail=False, methods=["get"], url_path="qr", throttle_classes=[QrRateThrottle])
     def qr(self, request):
         public_id = request.query_params.get("public_id")
         public_uuid, error_response = _parse_public_id(public_id)
@@ -339,6 +340,7 @@ class ProgramSettingsViewSet(viewsets.ViewSet):
 
 class SummaryReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)
@@ -368,6 +370,7 @@ class SummaryReportView(APIView):
 
 class RewardReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)
@@ -394,6 +397,7 @@ class RewardReportView(APIView):
 
 class TransactionReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)
@@ -418,6 +422,7 @@ class TransactionReportView(APIView):
 
 class TransactionDailyReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)
@@ -452,6 +457,7 @@ class TransactionDailyReportView(APIView):
 
 class TransactionPeriodReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)
@@ -494,6 +500,7 @@ class TransactionPeriodReportView(APIView):
 
 class TransactionReportCsvView(APIView):
     permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
 
     def get(self, request):
         start_date, end_date, error_response = _parse_date_range(request)

@@ -57,6 +57,11 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    "DEFAULT_THROTTLE_RATES": {
+        "scan": "30/min",
+        "qr": "30/min",
+        "reports": "10/min",
+    },
 }
 
 MIDDLEWARE = [
