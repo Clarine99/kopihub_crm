@@ -8,6 +8,7 @@ from .views import (
     ProgramSettingsViewSet,
     RewardReportView,
     SummaryReportView,
+    TransactionDailyReportView,
     TransactionReportView,
 )
 
@@ -22,4 +23,9 @@ urlpatterns = [
     path("reports/summary/", SummaryReportView.as_view(), name="reports-summary"),
     path("reports/rewards/", RewardReportView.as_view(), name="reports-rewards"),
     path("reports/transactions/", TransactionReportView.as_view(), name="reports-transactions"),
+    path(
+        "reports/transactions/daily/",
+        TransactionDailyReportView.as_view(),
+        name="reports-transactions-daily",
+    ),
 ]

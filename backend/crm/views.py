@@ -1,18 +1,41 @@
 from decimal import Decimal
+import io
 
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.http import HttpResponse
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import TruncDate
 from django.utils.dateparse import parse_date
+
+import qrcode
 
 from .models import Customer, Membership, MembershipCard, MembershipStatus, ProgramSettings, RewardType, Stamp
 from .serializers import CustomerSerializer, MembershipCardSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 from users.permissions import IsAdminUserRole, IsCashierOrAdminRole
+
+
+def _parse_date_range(request):
+    start_param = request.query_params.get("from")
+    end_param = request.query_params.get("to")
+    try:
+        start_date = parse_date(start_param) if start_param else None
+    except ValueError:
+        start_date = None
+    try:
+        end_date = parse_date(end_param) if end_param else None
+    except ValueError:
+        end_date = None
+    if start_param and not start_date:
+        return None, None, Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
+    if end_param and not end_date:
+        return None, None, Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+    return start_date, end_date, None
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -32,6 +55,28 @@ class MembershipViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsCashierOrAdminRole]
         return [perm() for perm in permission_classes]
+
+    @staticmethod
+    def _build_history_summary(membership, active_only=False):
+        cycles = membership.cycles.order_by("cycle_number")
+        active_cycle = cycles.filter(is_closed=False).last()
+        latest_cycle = cycles.last()
+        cycle = active_cycle if active_only else (active_cycle or latest_cycle)
+
+        if cycle is None:
+            return {
+                "membership_id": membership.id,
+                "cycle_number": None,
+                "stamp_count": 0,
+                "is_full": False,
+            }
+
+        return {
+            "membership_id": membership.id,
+            "cycle_number": cycle.cycle_number,
+            "stamp_count": cycle.stamp_count,
+            "is_full": cycle.is_full,
+        }
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -181,26 +226,30 @@ class MembershipViewSet(viewsets.ModelViewSet):
     def history_summary(self, request, pk=None):
         membership = self.get_object()
         active_only = request.query_params.get("active_only") in {"1", "true", "yes"}
-        cycles = membership.cycles.order_by("cycle_number")
-        active_cycle = cycles.filter(is_closed=False).last()
-        latest_cycle = cycles.last()
-        cycle = active_cycle if active_only else (active_cycle or latest_cycle)
+        data = self._build_history_summary(membership, active_only=active_only)
+        return Response(data)
 
-        if cycle is None:
-            data = {
-                "membership_id": membership.id,
-                "cycle_number": None,
-                "stamp_count": 0,
-                "is_full": False,
-            }
-            return Response(data)
+    @action(detail=False, methods=["get"], url_path="history-summary")
+    def history_summary_lookup(self, request):
+        card_number = request.query_params.get("card_number")
+        public_id = request.query_params.get("public_id")
+        active_only = request.query_params.get("active_only") in {"1", "true", "yes"}
 
-        data = {
-            "membership_id": membership.id,
-            "cycle_number": cycle.cycle_number,
-            "stamp_count": cycle.stamp_count,
-            "is_full": cycle.is_full,
-        }
+        if not (card_number or public_id):
+            return Response(
+                {"detail": "card_number or public_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        card = None
+        if card_number:
+            card = MembershipCard.objects.filter(card_number=card_number).first()
+        if card is None and public_id:
+            card = MembershipCard.objects.filter(public_id=public_id).first()
+        if card is None or card.membership is None:
+            return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        data = self._build_history_summary(card.membership, active_only=active_only)
         return Response(data)
 
 
@@ -208,6 +257,21 @@ class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewS
     queryset = MembershipCard.objects.all()
     serializer_class = MembershipCardSerializer
     permission_classes = [IsCashierOrAdminRole]
+
+    @action(detail=False, methods=["get"], url_path="qr")
+    def qr(self, request):
+        public_id = request.query_params.get("public_id")
+        if not public_id:
+            return Response({"detail": "public_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        card = MembershipCard.objects.filter(public_id=public_id).first()
+        if card is None:
+            return Response({"detail": "Card not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        img = qrcode.make(str(card.public_id))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return HttpResponse(buffer.getvalue(), content_type="image/png")
 
 
 class ProgramSettingsViewSet(viewsets.ViewSet):
@@ -245,20 +309,9 @@ class SummaryReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
 
     def get(self, request):
-        start_param = request.query_params.get("from")
-        end_param = request.query_params.get("to")
-        try:
-            start_date = parse_date(start_param) if start_param else None
-        except ValueError:
-            start_date = None
-        try:
-            end_date = parse_date(end_param) if end_param else None
-        except ValueError:
-            end_date = None
-        if start_param and not start_date:
-            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
-        if end_param and not end_date:
-            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
 
         memberships = Membership.objects.all()
         if start_date:
@@ -285,20 +338,9 @@ class RewardReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
 
     def get(self, request):
-        start_param = request.query_params.get("from")
-        end_param = request.query_params.get("to")
-        try:
-            start_date = parse_date(start_param) if start_param else None
-        except ValueError:
-            start_date = None
-        try:
-            end_date = parse_date(end_param) if end_param else None
-        except ValueError:
-            end_date = None
-        if start_param and not start_date:
-            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
-        if end_param and not end_date:
-            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
 
         used = Stamp.objects.filter(redeemed_at__isnull=False)
         unused = Stamp.objects.filter(redeemed_at__isnull=True)
@@ -322,20 +364,9 @@ class TransactionReportView(APIView):
     permission_classes = [IsCashierOrAdminRole]
 
     def get(self, request):
-        start_param = request.query_params.get("from")
-        end_param = request.query_params.get("to")
-        try:
-            start_date = parse_date(start_param) if start_param else None
-        except ValueError:
-            start_date = None
-        try:
-            end_date = parse_date(end_param) if end_param else None
-        except ValueError:
-            end_date = None
-        if start_param and not start_date:
-            return Response({"detail": "Invalid from date"}, status=status.HTTP_400_BAD_REQUEST)
-        if end_param and not end_date:
-            return Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
 
         stamps = Stamp.objects.all()
         if start_date:
@@ -350,4 +381,38 @@ class TransactionReportView(APIView):
             )["total"]
             or 0,
         }
+        return Response(data)
+
+
+class TransactionDailyReportView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
+
+        stamps = Stamp.objects.all()
+        if start_date:
+            stamps = stamps.filter(created_at__date__gte=start_date)
+        if end_date:
+            stamps = stamps.filter(created_at__date__lte=end_date)
+
+        rows = (
+            stamps.annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(
+                eligible_stamp_count=models.Count("id"),
+                total_transaction_amount=models.Sum("transaction_amount"),
+            )
+            .order_by("day")
+        )
+        data = [
+            {
+                "date": row["day"].isoformat() if row["day"] else None,
+                "eligible_stamp_count": row["eligible_stamp_count"],
+                "total_transaction_amount": row["total_transaction_amount"] or 0,
+            }
+            for row in rows
+        ]
         return Response(data)

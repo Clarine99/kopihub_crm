@@ -95,6 +95,12 @@ class MembershipCardApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data["card_number"].startswith("CARD-"))
 
+    def test_card_qr_returns_png(self):
+        card = MembershipCard.objects.create()
+        response = self.client.get(reverse("cards-qr"), data={"public_id": str(card.public_id)})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], "image/png")
+
 
 class MembershipHistoryApiTests(TestCase):
     def setUp(self):
@@ -144,6 +150,19 @@ class MembershipHistoryApiTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["cycle_number"], active_cycle.cycle_number)
+
+    def test_history_summary_lookup_by_public_id(self):
+        card = MembershipCard.objects.create(
+            card_number=self.membership.card_number,
+            membership=self.membership,
+            is_assigned=True,
+        )
+        response = self.client.get(
+            reverse("memberships-history-summary-lookup"),
+            data={"public_id": str(card.public_id)},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["membership_id"], self.membership.id)
 
 
 class SummaryReportApiTests(TestCase):
@@ -203,3 +222,8 @@ class TransactionReportApiTests(TestCase):
         response = self.client.get(reverse("reports-transactions"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("eligible_stamp_count", response.data)
+
+    def test_transaction_daily_report_returns_list(self):
+        response = self.client.get(reverse("reports-transactions-daily"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(response.data, list)
