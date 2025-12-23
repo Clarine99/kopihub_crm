@@ -164,6 +164,23 @@ class MembershipHistoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["membership_id"], self.membership.id)
 
+    def test_scan_returns_membership_detail(self):
+        card = MembershipCard.objects.create(
+            card_number=self.membership.card_number,
+            membership=self.membership,
+            is_assigned=True,
+        )
+        response = self.client.get(
+            reverse("memberships-scan"),
+            data={"public_id": str(card.public_id)},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.membership.id)
+
+    def test_scan_invalid_public_id(self):
+        response = self.client.get(reverse("memberships-scan"), data={"public_id": "1"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class SummaryReportApiTests(TestCase):
     def setUp(self):
@@ -227,3 +244,13 @@ class TransactionReportApiTests(TestCase):
         response = self.client.get(reverse("reports-transactions-daily"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
+
+    def test_transaction_period_report_returns_list(self):
+        response = self.client.get(reverse("reports-transactions-period"), data={"period": "week"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsInstance(response.data, list)
+
+    def test_transaction_csv_report_returns_csv(self):
+        response = self.client.get(reverse("reports-transactions-csv"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], "text/csv")

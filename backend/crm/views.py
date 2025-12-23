@@ -1,5 +1,6 @@
 from decimal import Decimal
 import io
+import uuid
 
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -9,7 +10,7 @@ from rest_framework.views import APIView
 from django.http import HttpResponse
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 from django.utils.dateparse import parse_date
 
 import qrcode
@@ -36,6 +37,15 @@ def _parse_date_range(request):
     if end_param and not end_date:
         return None, None, Response({"detail": "Invalid to date"}, status=status.HTTP_400_BAD_REQUEST)
     return start_date, end_date, None
+
+
+def _parse_public_id(value):
+    if not value:
+        return None, Response({"detail": "public_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        return uuid.UUID(str(value)), None
+    except (ValueError, TypeError):
+        return None, Response({"detail": "Invalid public_id"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -245,12 +255,33 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if card_number:
             card = MembershipCard.objects.filter(card_number=card_number).first()
         if card is None and public_id:
-            card = MembershipCard.objects.filter(public_id=public_id).first()
+            public_uuid, error_response = _parse_public_id(public_id)
+            if error_response:
+                return error_response
+            card = MembershipCard.objects.filter(public_id=public_uuid).first()
         if card is None or card.membership is None:
             return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
 
         data = self._build_history_summary(card.membership, active_only=active_only)
         return Response(data)
+
+    @action(detail=False, methods=["get"], url_path="scan")
+    def scan(self, request):
+        public_id = request.query_params.get("public_id")
+        public_uuid, error_response = _parse_public_id(public_id)
+        if error_response:
+            return error_response
+
+        card = (
+            MembershipCard.objects.select_related("membership__customer")
+            .filter(public_id=public_uuid)
+            .first()
+        )
+        if card is None or card.membership is None:
+            return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = self.get_serializer(card.membership)
+        return Response(serializer.data)
 
 
 class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
@@ -261,10 +292,11 @@ class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewS
     @action(detail=False, methods=["get"], url_path="qr")
     def qr(self, request):
         public_id = request.query_params.get("public_id")
-        if not public_id:
-            return Response({"detail": "public_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        public_uuid, error_response = _parse_public_id(public_id)
+        if error_response:
+            return error_response
 
-        card = MembershipCard.objects.filter(public_id=public_id).first()
+        card = MembershipCard.objects.filter(public_id=public_uuid).first()
         if card is None:
             return Response({"detail": "Card not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -416,3 +448,80 @@ class TransactionDailyReportView(APIView):
             for row in rows
         ]
         return Response(data)
+
+
+class TransactionPeriodReportView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
+
+        period = request.query_params.get("period", "month")
+        if period not in {"week", "month"}:
+            return Response(
+                {"detail": "Invalid period, use 'week' or 'month'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        stamps = Stamp.objects.all()
+        if start_date:
+            stamps = stamps.filter(created_at__date__gte=start_date)
+        if end_date:
+            stamps = stamps.filter(created_at__date__lte=end_date)
+
+        trunc = TruncWeek("created_at") if period == "week" else TruncMonth("created_at")
+        rows = (
+            stamps.annotate(period=trunc)
+            .values("period")
+            .annotate(
+                eligible_stamp_count=models.Count("id"),
+                total_transaction_amount=models.Sum("transaction_amount"),
+            )
+            .order_by("period")
+        )
+        data = [
+            {
+                "period": row["period"].isoformat() if row["period"] else None,
+                "eligible_stamp_count": row["eligible_stamp_count"],
+                "total_transaction_amount": row["total_transaction_amount"] or 0,
+            }
+            for row in rows
+        ]
+        return Response(data)
+
+
+class TransactionReportCsvView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+
+    def get(self, request):
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
+
+        stamps = Stamp.objects.all()
+        if start_date:
+            stamps = stamps.filter(created_at__date__gte=start_date)
+        if end_date:
+            stamps = stamps.filter(created_at__date__lte=end_date)
+
+        rows = (
+            stamps.annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(
+                eligible_stamp_count=models.Count("id"),
+                total_transaction_amount=models.Sum("transaction_amount"),
+            )
+            .order_by("day")
+        )
+
+        lines = ["date,eligible_stamp_count,total_transaction_amount"]
+        for row in rows:
+            day = row["day"].isoformat() if row["day"] else ""
+            total = row["total_transaction_amount"] or 0
+            lines.append(f"{day},{row['eligible_stamp_count']},{total}")
+        content = "\n".join(lines)
+        response = HttpResponse(content, content_type="text/csv")
+        response["Content-Disposition"] = "attachment; filename=\"transaction_report.csv\""
+        return response
