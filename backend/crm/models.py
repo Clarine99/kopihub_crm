@@ -216,3 +216,39 @@ class ProgramSettings(TimeStampedModel):
     def get_solo(cls) -> "ProgramSettings":
         obj, _ = cls.objects.get_or_create(id=1)
         return obj
+
+
+class AuditAction(models.TextChoices):
+    ACTIVATE_CARD = "activate_card", "Activate Card"
+    SCAN = "scan", "Scan"
+    REDEEM = "redeem", "Redeem"
+    REPLACE_CARD = "replace_card", "Replace Card"
+
+
+class AuditLog(TimeStampedModel):
+    action = models.CharField(max_length=30, choices=AuditAction.choices)
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    membership = models.ForeignKey(
+        Membership,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    card = models.ForeignKey(
+        MembershipCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.action} ({self.created_at})"

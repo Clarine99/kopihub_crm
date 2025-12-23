@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 
 from users.models import UserRole
 
-from .models import Customer, Membership, MembershipCard, ProgramSettings, RewardType, StampCycle
+from .models import AuditAction, AuditLog, Customer, Membership, MembershipCard, ProgramSettings, RewardType, Stamp, StampCycle
 from .serializers import MembershipSerializer
 from .services import award_stamp_for_transaction
 
@@ -181,6 +181,28 @@ class MembershipHistoryApiTests(TestCase):
         response = self.client.get(reverse("memberships-scan"), data={"public_id": "1"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_replace_card_creates_audit_log(self):
+        card = MembershipCard.objects.create(
+            card_number=self.membership.card_number,
+            membership=self.membership,
+            is_assigned=True,
+        )
+        response = self.client.post(
+            reverse("memberships-replace-card", kwargs={"pk": self.membership.id}),
+            data={},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditAction.REPLACE_CARD,
+                membership=self.membership,
+                card__is_assigned=True,
+            ).exists()
+        )
+        card.refresh_from_db()
+        self.assertFalse(card.is_assigned)
+
 
 class SummaryReportApiTests(TestCase):
     def setUp(self):
@@ -202,6 +224,11 @@ class SummaryReportApiTests(TestCase):
         response = self.client.get(reverse("reports-summary"), data={"from": "2025-99-99"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_summary_report_csv_returns_csv(self):
+        response = self.client.get(reverse("reports-summary-csv"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], "text/csv")
+
 
 class RewardReportApiTests(TestCase):
     def setUp(self):
@@ -222,6 +249,11 @@ class RewardReportApiTests(TestCase):
     def test_reward_report_invalid_to_date(self):
         response = self.client.get(reverse("reports-rewards"), data={"to": "invalid-date"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_reward_report_csv_returns_csv(self):
+        response = self.client.get(reverse("reports-rewards-csv"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], "text/csv")
 
 
 class TransactionReportApiTests(TestCase):
@@ -254,3 +286,69 @@ class TransactionReportApiTests(TestCase):
         response = self.client.get(reverse("reports-transactions-csv"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response["Content-Type"], "text/csv")
+
+
+class AuditLogApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="cashier-audit",
+            password="pass1234",
+            role=UserRole.CASHIER,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.customer = Customer.objects.create(name="Audit Tester", phone="0800000002")
+        today = timezone.localdate()
+        self.membership = Membership.objects.create(
+            customer=self.customer,
+            card_number="CARD-AUDIT",
+            start_date=today,
+            end_date=today + timedelta(days=90),
+        )
+
+    def test_activate_card_creates_audit_log(self):
+        card = MembershipCard.objects.create(card_number="CARD-ACT")
+        response = self.client.post(
+            reverse("memberships-activate-card"),
+            data={
+                "card_number": card.card_number,
+                "name": "Audit Tester",
+                "phone": "0800000002",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditAction.ACTIVATE_CARD,
+                card=card,
+            ).exists()
+        )
+
+    def test_redeem_creates_audit_log(self):
+        card = MembershipCard.objects.create(
+            card_number=self.membership.card_number,
+            membership=self.membership,
+            is_assigned=True,
+        )
+        cycle = StampCycle.objects.create(membership=self.membership, cycle_number=1)
+        stamp = Stamp.objects.create(
+            cycle=cycle,
+            number=1,
+            reward_type=RewardType.FREE_DRINK,
+        )
+        response = self.client.post(
+            reverse("memberships-redeem-reward", kwargs={"pk": self.membership.id}),
+            data={"reward_type": RewardType.FREE_DRINK},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditAction.REDEEM,
+                membership=self.membership,
+                card=card,
+                metadata__stamp_id=stamp.id,
+            ).exists()
+        )

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Customer, Membership, MembershipCard, ProgramSettings, Stamp, StampCycle
+from .models import AuditLog, Customer, Membership, MembershipCard, ProgramSettings, Stamp, StampCycle
 
 
 @admin.register(Customer)
@@ -45,3 +45,10 @@ class ProgramSettingsAdmin(admin.ModelAdmin):
         "reward_stamp_1_type",
         "reward_stamp_10_type",
     )
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ("action", "user", "membership", "card", "created_at")
+    list_filter = ("action", "created_at")
+    search_fields = ("membership__card_number", "card__card_number", "user__username")

@@ -1078,8 +1078,11 @@ Konsep:
   - `GET /api/memberships/{id}/history-summary/` → ringkas cycle aktif/latest (opsional `active_only=true`).
   - `GET /api/memberships/history-summary/?public_id=...` → ringkas cycle via kartu (opsional `active_only=true`).
   - `GET /api/memberships/scan/?public_id=...` → scan QR dan return detail membership.
+  - `POST /api/memberships/{id}/replace-card/` → ganti kartu member (opsional `card_number`/`public_id`).
   - `GET /api/reports/rewards/` → agregasi reward terpakai vs belum.
   - `GET /api/reports/summary/` → ringkasan jumlah member aktif/expired + reward terpakai.
+  - `GET /api/reports/summary/csv/` → export CSV ringkasan.
+  - `GET /api/reports/rewards/csv/` → export CSV reward.
   - `GET /api/reports/transactions/` → jumlah stamp eligible + total transaksi.
   - `GET /api/reports/transactions/daily/` → agregasi transaksi per hari.
   - `GET /api/reports/transactions/period/?period=week|month` → agregasi transaksi per minggu/bulan.
@@ -1098,6 +1101,11 @@ Contoh penggunaan:
 - History summary by card: `GET /api/memberships/history-summary/?public_id=UUID&active_only=true`
 - Scan QR: `GET /api/memberships/scan/?public_id=UUID`
 - CSV transaksi: `GET /api/reports/transactions/csv/`
+- CSV summary: `GET /api/reports/summary/csv/`
+- CSV rewards: `GET /api/reports/rewards/csv/`
+
+Audit log:
+- Dicatat untuk aksi: activate card, scan, redeem, replace card.
 
 Rate limit (default):
 - scan: 30 req/menit per user

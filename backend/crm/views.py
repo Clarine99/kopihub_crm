@@ -15,7 +15,17 @@ from django.utils.dateparse import parse_date
 
 import qrcode
 
-from .models import Customer, Membership, MembershipCard, MembershipStatus, ProgramSettings, RewardType, Stamp
+from .models import (
+    AuditAction,
+    AuditLog,
+    Customer,
+    Membership,
+    MembershipCard,
+    MembershipStatus,
+    ProgramSettings,
+    RewardType,
+    Stamp,
+)
 from .serializers import CustomerSerializer, MembershipCardSerializer, MembershipSerializer, StampSerializer
 from .services import award_stamp_for_transaction
 from .throttles import QrRateThrottle, ReportsRateThrottle, ScanRateThrottle
@@ -47,6 +57,55 @@ def _parse_public_id(value):
         return uuid.UUID(str(value)), None
     except (ValueError, TypeError):
         return None, Response({"detail": "Invalid public_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _log_audit(action, request, membership=None, card=None, metadata=None):
+    AuditLog.objects.create(
+        action=action,
+        user=request.user if request.user and request.user.is_authenticated else None,
+        membership=membership,
+        card=card,
+        metadata=metadata or {},
+    )
+
+
+def _build_summary_data(start_date=None, end_date=None):
+    memberships = Membership.objects.all()
+    if start_date:
+        memberships = memberships.filter(created_at__date__gte=start_date)
+    if end_date:
+        memberships = memberships.filter(created_at__date__lte=end_date)
+
+    redeemed_stamps = Stamp.objects.filter(redeemed_at__isnull=False)
+    if start_date:
+        redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__gte=start_date)
+    if end_date:
+        redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__lte=end_date)
+
+    return {
+        "active_members": memberships.filter(status=MembershipStatus.ACTIVE).count(),
+        "expired_members": memberships.filter(status=MembershipStatus.EXPIRED).count(),
+        "free_drink_used": redeemed_stamps.filter(reward_type=RewardType.FREE_DRINK).count(),
+        "voucher_used": redeemed_stamps.filter(reward_type=RewardType.VOUCHER_50K).count(),
+    }
+
+
+def _build_rewards_data(start_date=None, end_date=None):
+    used = Stamp.objects.filter(redeemed_at__isnull=False)
+    unused = Stamp.objects.filter(redeemed_at__isnull=True)
+    if start_date:
+        used = used.filter(redeemed_at__date__gte=start_date)
+        unused = unused.filter(created_at__date__gte=start_date)
+    if end_date:
+        used = used.filter(redeemed_at__date__lte=end_date)
+        unused = unused.filter(created_at__date__lte=end_date)
+
+    return {
+        "free_drink_used": used.filter(reward_type=RewardType.FREE_DRINK).count(),
+        "free_drink_unused": unused.filter(reward_type=RewardType.FREE_DRINK).count(),
+        "voucher_used": used.filter(reward_type=RewardType.VOUCHER_50K).count(),
+        "voucher_unused": unused.filter(reward_type=RewardType.VOUCHER_50K).count(),
+    }
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -183,6 +242,13 @@ class MembershipViewSet(viewsets.ModelViewSet):
             customer=customer,
             card=card,
         )
+        _log_audit(
+            AuditAction.ACTIVATE_CARD,
+            request,
+            membership=membership,
+            card=card,
+            metadata={"public_id": str(card.public_id)},
+        )
         serializer = self.get_serializer(membership)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -225,6 +291,13 @@ class MembershipViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No reward available"}, status=status.HTTP_400_BAD_REQUEST)
 
         stamp.mark_redeemed()
+        _log_audit(
+            AuditAction.REDEEM,
+            request,
+            membership=membership,
+            card=membership.card if hasattr(membership, "card") else None,
+            metadata={"reward_type": reward_type, "stamp_id": stamp.id},
+        )
         return Response(StampSerializer(stamp).data)
 
     @action(detail=True, methods=["get"], url_path="history")
@@ -281,7 +354,67 @@ class MembershipViewSet(viewsets.ModelViewSet):
         if card is None or card.membership is None:
             return Response({"detail": "Membership not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        _log_audit(
+            AuditAction.SCAN,
+            request,
+            membership=card.membership,
+            card=card,
+            metadata={"public_id": str(card.public_id)},
+        )
         serializer = self.get_serializer(card.membership)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="replace-card")
+    def replace_card(self, request, pk=None):
+        membership = self.get_object()
+        card_number = request.data.get("card_number")
+        public_id = request.data.get("public_id")
+
+        if card_number and public_id:
+            return Response(
+                {"detail": "Provide only one of card_number or public_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_card = None
+        if card_number:
+            new_card = MembershipCard.objects.filter(card_number=card_number).first()
+        elif public_id:
+            public_uuid, error_response = _parse_public_id(public_id)
+            if error_response:
+                return error_response
+            new_card = MembershipCard.objects.filter(public_id=public_uuid).first()
+
+        if new_card is None:
+            new_card = MembershipCard.objects.create()
+        elif new_card.is_assigned or new_card.membership:
+            return Response({"detail": "Card already assigned"}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_card = getattr(membership, "card", None)
+        if old_card:
+            old_card.membership = None
+            old_card.is_assigned = False
+            old_card.save(update_fields=["membership", "is_assigned"])
+
+        new_card.membership = membership
+        new_card.is_assigned = True
+        new_card.save(update_fields=["membership", "is_assigned"])
+
+        membership.card_number = new_card.card_number
+        membership.save(update_fields=["card_number"])
+
+        _log_audit(
+            AuditAction.REPLACE_CARD,
+            request,
+            membership=membership,
+            card=new_card,
+            metadata={
+                "old_card_id": old_card.id if old_card else None,
+                "new_card_id": new_card.id,
+            },
+        )
+
+        serializer = self.get_serializer(membership)
         return Response(serializer.data)
 
 
@@ -347,25 +480,29 @@ class SummaryReportView(APIView):
         if error_response:
             return error_response
 
-        memberships = Membership.objects.all()
-        if start_date:
-            memberships = memberships.filter(created_at__date__gte=start_date)
-        if end_date:
-            memberships = memberships.filter(created_at__date__lte=end_date)
-
-        redeemed_stamps = Stamp.objects.filter(redeemed_at__isnull=False)
-        if start_date:
-            redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__gte=start_date)
-        if end_date:
-            redeemed_stamps = redeemed_stamps.filter(redeemed_at__date__lte=end_date)
-
-        data = {
-            "active_members": memberships.filter(status=MembershipStatus.ACTIVE).count(),
-            "expired_members": memberships.filter(status=MembershipStatus.EXPIRED).count(),
-            "free_drink_used": redeemed_stamps.filter(reward_type=RewardType.FREE_DRINK).count(),
-            "voucher_used": redeemed_stamps.filter(reward_type=RewardType.VOUCHER_50K).count(),
-        }
+        data = _build_summary_data(start_date=start_date, end_date=end_date)
         return Response(data)
+
+
+class SummaryReportCsvView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
+
+    def get(self, request):
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
+
+        data = _build_summary_data(start_date=start_date, end_date=end_date)
+        lines = ["active_members,expired_members,free_drink_used,voucher_used"]
+        lines.append(
+            f"{data['active_members']},{data['expired_members']},"
+            f"{data['free_drink_used']},{data['voucher_used']}"
+        )
+        content = "\n".join(lines)
+        response = HttpResponse(content, content_type="text/csv")
+        response["Content-Disposition"] = "attachment; filename=\"summary_report.csv\""
+        return response
 
 
 class RewardReportView(APIView):
@@ -377,22 +514,29 @@ class RewardReportView(APIView):
         if error_response:
             return error_response
 
-        used = Stamp.objects.filter(redeemed_at__isnull=False)
-        unused = Stamp.objects.filter(redeemed_at__isnull=True)
-        if start_date:
-            used = used.filter(redeemed_at__date__gte=start_date)
-            unused = unused.filter(created_at__date__gte=start_date)
-        if end_date:
-            used = used.filter(redeemed_at__date__lte=end_date)
-            unused = unused.filter(created_at__date__lte=end_date)
-
-        data = {
-            "free_drink_used": used.filter(reward_type=RewardType.FREE_DRINK).count(),
-            "free_drink_unused": unused.filter(reward_type=RewardType.FREE_DRINK).count(),
-            "voucher_used": used.filter(reward_type=RewardType.VOUCHER_50K).count(),
-            "voucher_unused": unused.filter(reward_type=RewardType.VOUCHER_50K).count(),
-        }
+        data = _build_rewards_data(start_date=start_date, end_date=end_date)
         return Response(data)
+
+
+class RewardReportCsvView(APIView):
+    permission_classes = [IsCashierOrAdminRole]
+    throttle_classes = [ReportsRateThrottle]
+
+    def get(self, request):
+        start_date, end_date, error_response = _parse_date_range(request)
+        if error_response:
+            return error_response
+
+        data = _build_rewards_data(start_date=start_date, end_date=end_date)
+        lines = [
+            "free_drink_used,free_drink_unused,voucher_used,voucher_unused",
+            f"{data['free_drink_used']},{data['free_drink_unused']},"
+            f"{data['voucher_used']},{data['voucher_unused']}",
+        ]
+        content = "\n".join(lines)
+        response = HttpResponse(content, content_type="text/csv")
+        response["Content-Disposition"] = "attachment; filename=\"reward_report.csv\""
+        return response
 
 
 class TransactionReportView(APIView):

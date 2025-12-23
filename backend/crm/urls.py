@@ -7,8 +7,12 @@ from .views import (
     MembershipViewSet,
     ProgramSettingsViewSet,
     RewardReportView,
+    RewardReportCsvView,
     SummaryReportView,
+    SummaryReportCsvView,
     TransactionDailyReportView,
+    TransactionPeriodReportView,
+    TransactionReportCsvView,
     TransactionReportView,
 )
 
@@ -21,11 +25,23 @@ router.register(r"settings", ProgramSettingsViewSet, basename="settings")
 urlpatterns = [
     *router.urls,
     path("reports/summary/", SummaryReportView.as_view(), name="reports-summary"),
+    path("reports/summary/csv/", SummaryReportCsvView.as_view(), name="reports-summary-csv"),
     path("reports/rewards/", RewardReportView.as_view(), name="reports-rewards"),
+    path("reports/rewards/csv/", RewardReportCsvView.as_view(), name="reports-rewards-csv"),
     path("reports/transactions/", TransactionReportView.as_view(), name="reports-transactions"),
     path(
         "reports/transactions/daily/",
         TransactionDailyReportView.as_view(),
         name="reports-transactions-daily",
+    ),
+    path(
+        "reports/transactions/period/",
+        TransactionPeriodReportView.as_view(),
+        name="reports-transactions-period",
+    ),
+    path(
+        "reports/transactions/csv/",
+        TransactionReportCsvView.as_view(),
+        name="reports-transactions-csv",
     ),
 ]
