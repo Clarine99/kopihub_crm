@@ -120,6 +120,13 @@ class MembershipHistoryApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["id"], self.membership.id)
 
+    def test_history_summary_returns_cycle_info(self):
+        response = self.client.get(
+            reverse("memberships-history-summary", kwargs={"pk": self.membership.id})
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["membership_id"], self.membership.id)
+
 
 class SummaryReportApiTests(TestCase):
     def setUp(self):

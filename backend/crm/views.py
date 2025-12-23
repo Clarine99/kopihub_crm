@@ -176,6 +176,31 @@ class MembershipViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(membership)
         return Response(serializer.data)
 
+    @action(detail=True, methods=["get"], url_path="history-summary")
+    def history_summary(self, request, pk=None):
+        membership = self.get_object()
+        cycles = membership.cycles.order_by("cycle_number")
+        active_cycle = cycles.filter(is_closed=False).last()
+        latest_cycle = cycles.last()
+        cycle = active_cycle or latest_cycle
+
+        if cycle is None:
+            data = {
+                "membership_id": membership.id,
+                "cycle_number": None,
+                "stamp_count": 0,
+                "is_full": False,
+            }
+            return Response(data)
+
+        data = {
+            "membership_id": membership.id,
+            "cycle_number": cycle.cycle_number,
+            "stamp_count": cycle.stamp_count,
+            "is_full": cycle.is_full,
+        }
+        return Response(data)
+
 
 class MembershipCardViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     queryset = MembershipCard.objects.all()
