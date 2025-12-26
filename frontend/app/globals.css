@@ -1,0 +1,24 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Work+Sans:wght@400;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-ink text-white min-h-screen;
+    font-family: "Space Grotesk", "Work Sans", sans-serif;
+    background-image:
+      radial-gradient(1200px 600px at 10% 10%, rgba(244, 185, 66, 0.12), transparent 60%),
+      radial-gradient(900px 500px at 90% 0%, rgba(79, 209, 197, 0.14), transparent 55%),
+      linear-gradient(160deg, #0b0d12, #111827 55%, #0b0d12 100%);
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+}
